@@ -1,0 +1,45 @@
+# .github/workflows/daily-salesi-reports.yml
+name: Daily Sales-i Reports
+
+on:
+  schedule:
+    # Runs every day at 6:00 AM UTC (adjust timezone as needed)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  generate-reports:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: npm install
+      
+    - name: Install Playwright browsers
+      run: npx playwright install chromium
+      
+    - name: Run sales-i reports
+      env:
+        SI_USERNAME: ${{ secrets.SI_USERNAME }}
+        SI_PASSWORD: ${{ secrets.SI_PASSWORD }}
+        GMAIL_USER: ${{ secrets.GMAIL_USER }}
+        GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+        TO_EMAIL: ${{ secrets.TO_EMAIL }}
+        ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+      run: node run-daily-salesi-FIXED.cjs
+      
+    - name: Upload screenshots on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-screenshots
+        path: screenshots/
+        retention-days: 7

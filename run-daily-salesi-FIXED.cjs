@@ -443,7 +443,7 @@ async function run() {
   const dateStr = yesterdayMMDDYYYY();
   log(`Run started. Date=${dateStr}, Output=${OUT_DIR}, LogFile=${LOG_FILE}`);
 
-  const browser = await chromium.launch({ headless: false }); // Set to false for debugging
+  const browser = await chromium.launch({ headless: true }); // Set to false for debugging
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await context.newPage();
   page.setDefaultTimeout(30000); // Reduced from 60000

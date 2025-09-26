@@ -15,7 +15,7 @@ const REPS = [
   { name: 'Murph',          id: '200226279' },
   { name: 'Jeremy',         id: '200224688' },
   { name: 'Jesse',          id: '200223301' },
-//  { name: 'John',           id: '200230324' },
+  { name: 'John',           id: '200230324' },
   { name: 'Kevin',          id: '200223210' },
 //  { name: 'Kevin Sellers',  id: '200229000' },
 //  { name: 'Matt Kartz',     id: '200228999' },

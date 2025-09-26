@@ -17,10 +17,10 @@ const REPS = [
   { name: 'Jesse',          id: '200223301' },
   { name: 'John',           id: '200230324' },
   { name: 'Kevin',          id: '200223210' },
-  { name: 'Kevin Sellers',  id: '200229000' },
-  { name: 'Matt Kartz',     id: '200228999' },
   { name: 'Mike',           id: '200221589' },
   { name: 'Trevor',         id: '200227744' },
+  { name: 'Kevin Sellers',  id: '200229000' },
+  { name: 'Matt Kartz',     id: '200228999' },
 ];
 
 const OUT_DIR = path.resolve('./screenshots');

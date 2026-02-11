@@ -1,16 +1,19 @@
 {
   "name": "salesi-daily-reports",
   "version": "1.0.0",
-  "description": "Automated daily Sales-i call outcome reports",
+  "description": "Automated daily Sales-i call outcome and call spend reports",
   "main": "run-daily-salesi-FIXED.cjs",
   "scripts": {
     "start": "node run-daily-salesi-FIXED.cjs",
-    "test": "node run-daily-salesi-FIXED.cjs"
+    "test": "node run-daily-salesi-FIXED.cjs",
+    "call-spend": "node run-daily-call-spend.cjs",
+    "call-spend:last-month": "node run-daily-call-spend.cjs"
   },
   "dependencies": {
     "playwright": "^1.40.0",
     "nodemailer": "^6.9.0",
-    "dotenv": "^16.3.0"
+    "dotenv": "^16.3.0",
+    "csv-parse": "^5.5.0"
   },
   "engines": {
     "node": ">=18"

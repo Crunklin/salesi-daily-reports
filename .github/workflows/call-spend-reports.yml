@@ -1,0 +1,73 @@
+# Call Spend Summary reports: scheduled + manual with optional timeframe
+# Setup: add repo secrets (see SETUP-GITHUB.md). Schedule is below; change cron to your time.
+name: Call Spend Summary Reports
+
+on:
+  schedule:
+    # 1st of every month at 11:00 UTC (e.g. 6 AM Eastern) — run for previous month
+    - cron: '0 11 1 * *'
+    # Optional: add more times, e.g. every Monday at 11:00 UTC:
+    # - cron: '0 11 * * 1'
+  workflow_dispatch:
+    inputs:
+      start_month:
+        description: 'Start month (YYYY-MM); blank = default (yesterday)'
+        required: false
+        type: string
+      end_month:
+        description: 'End month (YYYY-MM); blank = default (yesterday)'
+        required: false
+        type: string
+
+jobs:
+  call-spend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Set timeframe for scheduled run (previous month)
+        id: timeframe
+        if: github.event_name == 'schedule'
+        run: |
+          # On schedule (e.g. 1st of month), use previous month
+          PREV=$(date -d "last month" +%Y-%m 2>/dev/null || date -v-1m +%Y-%m 2>/dev/null)
+          echo "start_month=$PREV" >> $GITHUB_OUTPUT
+          echo "end_month=$PREV" >> $GITHUB_OUTPUT
+          echo "Using previous month: $PREV"
+
+      - name: Run Call Spend reports
+        env:
+          SI_USERNAME: ${{ secrets.SI_USERNAME }}
+          SI_PASSWORD: ${{ secrets.SI_PASSWORD }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          START_MONTH: ${{ github.event.inputs.start_month || (github.event_name == 'schedule' && steps.timeframe.outputs.start_month) }}
+          END_MONTH: ${{ github.event.inputs.end_month || (github.event_name == 'schedule' && steps.timeframe.outputs.end_month) }}
+        run: |
+          if [ -n "$START_MONTH" ] && [ -n "$END_MONTH" ]; then
+            node run-daily-call-spend.cjs "$START_MONTH" "$END_MONTH"
+          else
+            node run-daily-call-spend.cjs
+          fi
+
+      - name: Upload exports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: call-spend-exports
+          path: exports/
+          retention-days: 7

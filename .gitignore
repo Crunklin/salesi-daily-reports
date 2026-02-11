@@ -1,0 +1,18 @@
+# Secrets and local env (do not commit)
+.env
+.env.local
+
+# Dependencies and build
+node_modules/
+
+# Runtime output
+screenshots/
+exports/
+logs/
+
+# Playwright / IDE
+.playwright-mcp/
+
+# OS
+.DS_Store
+Thumbs.db

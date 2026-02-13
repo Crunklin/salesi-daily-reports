@@ -136,7 +136,31 @@ async function safeGoto(page, url, options = {}) {
   throw lastErr;
 }
 
+// Returns true if we're already on the Call Outcome Report page (filter controls or COR content visible).
+async function isAlreadyOnCORPage(page) {
+  const url = page.url();
+  if (/CallOutcome|call-outcome|RecordCard.*report/i.test(url)) {
+    log('  Already on COR page (URL match)');
+    return true;
+  }
+  const ctx = await resolveCRMFrame(page);
+  const anyVisible = await Promise.all([
+    ctx.locator('#start-date').isVisible().catch(() => false),
+    ctx.locator('#end-date').isVisible().catch(() => false),
+    ctx.locator('#ddUser').isVisible().catch(() => false),
+    ctx.locator('a').filter({ hasText: /Click for detail/i }).isVisible().catch(() => false),
+  ]).then(r => r.some(Boolean));
+  if (anyVisible) {
+    log('  Already on COR page (filter/detail controls visible)');
+    return true;
+  }
+  return false;
+}
+
 async function openCORFromWelcome(page) {
+  // If we're already on the COR page, don't click anything
+  if (await isAlreadyOnCORPage(page)) return true;
+
   // Prefer tile section with 'Call Outcome Report' then click 'VIEW REPORT'
   const card = page.locator('section,div,li,article').filter({ hasText: /Call Outcome Report/i }).first();
   const btn = card.getByRole('link', { name: /^VIEW REPORT$/i }).or(card.getByRole('button', { name: /^VIEW REPORT$/i }));
@@ -153,32 +177,40 @@ async function openCORFromWelcome(page) {
 // === IMPROVED FILTER PANEL CONTROLS ===
 
 // === Frame resolver: many Sales-i controls live inside an iframe ===
+// Helper: true if any of the visibility checks pass (use Promise.all + some, not race).
+async function anyVisible(locators) {
+  const results = await Promise.all(
+    locators.map(loc => loc.isVisible().catch(() => false))
+  );
+  return results.some(Boolean);
+}
+
 async function resolveCRMFrame(page) {
   try {
-    // First, if the main page already has target controls visible, use it
-    const hasControlsOnPage = await Promise.race([
-      page.locator('#start-date').isVisible().catch(() => false),
-      page.locator('#end-date').isVisible().catch(() => false),
-      page.locator('#ddUser').isVisible().catch(() => false),
-      page.getByRole('button', { name: /Apply/i }).isVisible().catch(() => false),
-    ]).catch(() => false);
-    if (hasControlsOnPage) { log('  Using top-level page context'); return page; }
+    const mainChecks = [
+      page.locator('#start-date'),
+      page.locator('#end-date'),
+      page.locator('#ddUser'),
+      page.getByRole('button', { name: /Apply/i }),
+    ];
+    if (await anyVisible(mainChecks)) { log('  Using top-level page context'); return page; }
 
-    // Otherwise search frames for one that contains our widgets
     for (const f of page.frames()) {
       try {
-        const hit = await Promise.race([
-          f.locator('#start-date').isVisible().catch(() => false),
-          f.locator('#end-date').isVisible().catch(() => false),
-          f.locator('#ddUser').isVisible().catch(() => false),
-          f.getByRole('button', { name: /Apply/i }).isVisible().catch(() => false),
-          f.locator('a').filter({ hasText: /Click for detail/i }).isVisible().catch(() => false),
-        ]).catch(() => false);
-        if (hit) { try { log('  Using iframe context: ' + (f.url ? f.url() : '[no url]')); } catch {} return f; }
+        const frameChecks = [
+          f.locator('#start-date'),
+          f.locator('#end-date'),
+          f.locator('#ddUser'),
+          f.getByRole('button', { name: /Apply/i }),
+          f.locator('a').filter({ hasText: /Click for detail/i }),
+        ];
+        if (await anyVisible(frameChecks)) {
+          try { log('  Using iframe context: ' + (f.url ? f.url() : '[no url]')); } catch {}
+          return f;
+        }
       } catch {}
     }
   } catch {}
-  // Fallback to page
   return page;
 }
 async function clickFilterBar(page) {
@@ -219,12 +251,13 @@ async function ensureFilterPanel(page) {
 
   log('  Checking if filter panel is already open...');
   
-  // First check if it's already visible
-  const isAlreadyOpen = await Promise.race([
-    ctx.locator('#start-date').isVisible().catch(() => false),
-    ctx.locator('#end-date').isVisible().catch(() => false),
-    ctx.locator('#ctl00_btnApply').isVisible().catch(() => false),
-  ]);
+  // First check if it's already visible (any of these = panel open)
+  const panelLocators = [
+    ctx.locator('#start-date'),
+    ctx.locator('#end-date'),
+    ctx.locator('#ctl00_btnApply'),
+  ];
+  const isAlreadyOpen = await anyVisible(panelLocators);
   
   if (isAlreadyOpen) {
     log('  Filter panel is already open');
@@ -239,12 +272,7 @@ async function ensureFilterPanel(page) {
     if (clicked) {
       await page.waitForTimeout(1000);
       
-      // Check if it's now visible
-      const isOpen = await Promise.race([
-        ctx.locator('#start-date').isVisible().catch(() => false),
-        ctx.locator('#end-date').isVisible().catch(() => false),
-        ctx.locator('#ctl00_btnApply').isVisible().catch(() => false),
-      ]);
+      const isOpen = await anyVisible(panelLocators);
       
       if (isOpen) {
         log('  Filter panel opened successfully');
@@ -505,16 +533,15 @@ async function clickApply(page) {
   }
   
   log('  ✗ Could not find Apply button');
-  
-  // CRITICAL FIX: Take a debug screenshot when Apply button not found
+  log(`  Current URL: ${page.url()}`);
   try {
-    await page.screenshot({ 
+    await page.screenshot({
       path: path.join(OUT_DIR, `debug-apply-not-found-${Date.now()}.png`),
-      fullPage: true 
+      fullPage: true
     });
     log('  Debug screenshot saved for missing Apply button');
   } catch {}
-  
+
   return false;
 }
 
@@ -547,10 +574,13 @@ async function run() {
     await safeGoto(page, TENANT_WELCOME, { attempts: 6, waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle').catch(() => {});
 
-    // Open Call Outcome Report tile
+    // Open Call Outcome Report tile (skips if already on COR page)
     log('Opening Call Outcome Report…');
     const opened = await openCORFromWelcome(page);
-    if (!opened) throw new Error('Could not open Call Outcome Report from welcome');
+    if (!opened) {
+      log(`  Current URL: ${page.url()}`);
+      throw new Error('Could not open Call Outcome Report from welcome');
+    }
     await page.waitForLoadState('domcontentloaded');
 
     // Ensure Filter panel open
@@ -596,22 +626,20 @@ async function run() {
       const applied = await clickApply(page);
       if (!applied) throw new Error('Could not click Apply Filters');
       
-      // ---- Early zero-calls check before attempting to open detail link ----
+      // ---- Early zero-calls check (run in resolved frame so we see COR content in iframe) ----
       let _earlySkipZeroCalls = false;
       await safe('Early zero-calls check', async () => {
-        // Give the page a moment to settle
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-        await page.waitForTimeout(300).catch(() => {});
+        await page.waitForTimeout(500).catch(() => {});
 
-        const createdCount = await page.evaluate(() => {
-          // Try #CreatedCount first
+        const ctx = await resolveCRMFrame(page);
+        const createdCount = await ctx.evaluate(() => {
           let el = document.querySelector('#CreatedCount') || document.querySelector('[id*="Created"][id*="Count"]');
           if (el) {
             const t = (el.innerText || el.textContent || '').trim();
             const m = t.match(/\d+/);
             if (m) return parseInt(m[0], 10);
           }
-          // As a heuristic: if there is no "Click for detail" anchor at all, treat as zero
           const hasDetailLink = !!Array.from(document.querySelectorAll('a')).find(a => /Click for detail/i.test(a.textContent || ''));
           return hasDetailLink ? null : 0;
         });
@@ -634,27 +662,27 @@ async function run() {
       }
       // ---- End early zero-calls check ----
 
-      // Wait for results to load
+      // Wait for results to load, then re-resolve frame (content may have changed after Apply)
       await page.waitForTimeout(3000);
 
       // Open detail - CRITICAL: Must get to the detailed call notes view
-      // === Graceful skip if no detail link (no calls yesterday) ===
       let openedDetail = false;
       try {
         await safe('Open detail link', async () => {
           const ctx = await resolveCRMFrame(page);
 
-          // Look for the "Click for detail" link in the results table
+          // Look for the "Click for detail" link (multiple selectors for robustness)
           const detailCandidates = [
             ctx.locator('#CreatedCount a').filter({ hasText: /Click for detail/i }),
-            ctx.getByRole('link', { name: /(Click for detail)/i }),
+            ctx.getByRole('link', { name: /(Click for detail|View detail|Details?)/i }),
             ctx.locator('a').filter({ hasText: /Click for detail/i }),
+            ctx.locator('a').filter({ hasText: /View detail/i }),
             ctx.locator('span#CreatedCount a'),
           ];
           
           let clicked = false;
           for (const candidate of detailCandidates) {
-            if (await candidate.isVisible({ timeout: 2000 }).catch(() => false)) {
+            if (await candidate.isVisible({ timeout: 2500 }).catch(() => false)) {
               log(`  Found detail link, clicking...`);
               await candidate.click();
               clicked = true;
@@ -663,8 +691,9 @@ async function run() {
           }
           
           if (!clicked) {
-            // Take debug screenshot to see what's on page
-            await ctx.screenshot({ path: path.join(OUT_DIR, `debug-no-detail-link-${rep.name}.png`) });
+            const debugPath = path.join(OUT_DIR, `debug-no-detail-link-${rep.name}.png`);
+            try { await page.screenshot({ path: debugPath, fullPage: true }); } catch {}
+            log(`  Current URL: ${page.url()}`);
             throw new Error('Detail link not found - check debug screenshot');
           }
           
@@ -781,38 +810,36 @@ async function run() {
               }
             }
             
-            // CRITICAL: Verify we're actually on the landing page
-            // Check for the sales rep summary table (not the detailed view)
-            const isOnLandingPage = await Promise.race([
-              // Look for the summary table header
-              page.locator('th:has-text("Sales Rep Name")').isVisible().catch(() => false),
-              page.locator('th:has-text("Total Calls Made")').isVisible().catch(() => false),
-            ]);
-            
+            // Verify we're on the landing page: check in main page AND resolved frame (table may be in iframe)
+            const ctxLanding = await resolveCRMFrame(page);
+            const landingChecks = [
+              page.locator('th:has-text("Sales Rep Name")'),
+              page.locator('th:has-text("Total Calls Made")'),
+              ctxLanding.locator('th:has-text("Sales Rep Name")'),
+              ctxLanding.locator('th:has-text("Total Calls Made")'),
+            ];
+            const isOnLandingPage = await anyVisible(landingChecks);
+
             if (isOnLandingPage) {
               log(`  ✓ Successfully navigated to landing page on attempt ${attempts}`);
-              
-              // Double check we're NOT still on detail view
-              const stillOnDetailView = await page.locator('h1:has-text("CALLS MADE:")').isVisible({ timeout: 1000 }).catch(() => false);
-              
+
+              const stillOnDetailView = await page.locator('h1:has-text("CALLS MADE:")').isVisible({ timeout: 1000 }).catch(() => false)
+                || await ctxLanding.locator('h1:has-text("CALLS MADE:")').isVisible({ timeout: 500 }).catch(() => false);
+
               if (stillOnDetailView) {
                 log(`  ✗ False positive - still on detail view, retrying...`);
                 continue;
               }
-              
-              // Success!
+
               return;
             } else {
-              log(`  ✗ Not on landing page yet, attempt ${attempts} failed`);
-              
-              // Take debug screenshot on failures
+              log(`  ✗ Not on landing page yet, attempt ${attempts} failed (URL: ${page.url()})`);
               if (attempts === maxAttempts) {
-                await page.screenshot({ 
+                await page.screenshot({
                   path: path.join(OUT_DIR, `debug-navigation-failed-${rep.name}.png`),
-                  fullPage: true 
+                  fullPage: true
                 });
               }
-              
               await page.waitForTimeout(1000);
             }
           }
@@ -853,6 +880,7 @@ async function run() {
     log('All reps processed.');
   } catch (fatal) {
     log(`FATAL: ${fatal?.message || fatal}`);
+    try { log(`  Page URL at failure: ${page.url()}`); } catch {}
     try {
       fatalShot = path.join(OUT_DIR, `FATAL_${RUN_ID}.png`);
       await page.screenshot({ path: fatalShot, fullPage: true });

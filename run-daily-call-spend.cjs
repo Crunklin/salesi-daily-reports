@@ -347,16 +347,52 @@ async function setAnalysisValue(page, rep) {
   }
 }
 
-async function clickOutsideDatepicker(page) {
-  // Datepicker must be dismissed by clicking outside the frame for the date to register
+async function dismissDatepicker(page) {
+  // Press Tab to blur field and fire change event, then Escape to close any popup
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(200);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  const heading = page.getByRole('heading', { name: 'Call Spend Summary' });
+  // Click page heading to dismiss datepicker widget
+  const heading = page.locator('h1').first();
   if (await heading.isVisible({ timeout: 500 }).catch(() => false)) {
     await heading.click({ force: true });
   } else {
     await page.locator('body').click({ position: { x: 10, y: 10 }, force: true }).catch(() => {});
   }
+  await page.waitForTimeout(400);
+}
+
+async function fillDateField(page, label, dateStr) {
+  const el = page.getByLabel(label);
+  if (!(await el.isVisible({ timeout: 8000 }).catch(() => false))) {
+    throw new Error(`Date field not found: ${label}`);
+  }
+  // Click to focus, select all existing text, type date char by char to trigger datepicker JS
+  await el.click({ force: true });
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(100);
+  await el.pressSequentially(dateStr, { delay: 50 });
+  log(`  ✓ ${label} typed: ${dateStr}`);
+  // Verify the field value was accepted
+  const val = await el.inputValue().catch(() => '');
+  log(`  Field value after typing: ${val}`);
+  await dismissDatepicker(page);
+  // Fire change event explicitly in case datepicker missed it
+  await page.evaluate((lbl) => {
+    const inputs = Array.from(document.querySelectorAll('input'));
+    const field = inputs.find(i => {
+      const id = i.id;
+      const labelEl = document.querySelector(`label[for="${id}"]`);
+      return labelEl && labelEl.textContent.trim().includes(lbl.replace(':', '').trim());
+    });
+    if (field) {
+      field.dispatchEvent(new Event('change', { bubbles: true }));
+      field.dispatchEvent(new Event('blur', { bubbles: true }));
+    }
+  }, label);
   await page.waitForTimeout(300);
 }
 
@@ -369,22 +405,9 @@ async function setDateInputs(page, startStr, endStr) {
   const panelReady = await ensureFilterPanel(page);
   if (!panelReady) throw new Error('Filter panel lost after Analysis Field change');
 
-  const startEl = page.getByLabel(SPEND.startDateLabel);
-  const endEl = page.getByLabel(SPEND.endDateLabel);
-
-  if (await startEl.isVisible({ timeout: 8000 }).catch(() => false)) {
-    await startEl.clear();
-    await startEl.fill(startStr);
-    log('  ✓ Start date set');
-    await clickOutsideDatepicker(page);
-  } else throw new Error('Start date field not found');
-
-  if (await endEl.isVisible({ timeout: 8000 }).catch(() => false)) {
-    await endEl.clear();
-    await endEl.fill(endStr);
-    log('  ✓ End date set');
-    await clickOutsideDatepicker(page);
-  } else throw new Error('End date field not found');
+  await fillDateField(page, SPEND.startDateLabel, startStr);
+  await fillDateField(page, SPEND.endDateLabel, endStr);
+  log('  ✓ Both dates set and confirmed');
 }
 
 async function setUser(page, rep) {

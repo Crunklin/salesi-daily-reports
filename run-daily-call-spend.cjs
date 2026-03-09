@@ -310,7 +310,9 @@ async function setAnalysisField(page) {
   const analysisField = page.getByRole('combobox', { name: SPEND.analysisFieldLabel });
   if (await analysisField.isVisible({ timeout: 2000 }).catch(() => false)) {
     await analysisField.selectOption(SPEND.analysisFieldValue);
-    await page.waitForTimeout(500); // allow Analysis Value field to appear
+    // Wait for page to settle after Analysis Field change (triggers DOM update on slow runners)
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(1000);
     log('  ✓ Analysis Field set to Sales Rep');
   }
 }
@@ -362,15 +364,22 @@ async function setDateInputs(page, startStr, endStr) {
   if (endStr === undefined) endStr = startStr;
   log(`  Setting dates: ${startStr} to ${endStr}`);
   await page.waitForTimeout(800);
+
+  // Re-ensure filter panel visible (Analysis Field change can cause DOM refresh on slow runners)
+  const panelReady = await ensureFilterPanel(page);
+  if (!panelReady) throw new Error('Filter panel lost after Analysis Field change');
+
   const startEl = page.getByLabel(SPEND.startDateLabel);
   const endEl = page.getByLabel(SPEND.endDateLabel);
-  if (await startEl.isVisible({ timeout: 2000 }).catch(() => false)) {
+
+  if (await startEl.isVisible({ timeout: 8000 }).catch(() => false)) {
     await startEl.clear();
     await startEl.fill(startStr);
     log('  ✓ Start date set');
     await clickOutsideDatepicker(page);
   } else throw new Error('Start date field not found');
-  if (await endEl.isVisible({ timeout: 2000 }).catch(() => false)) {
+
+  if (await endEl.isVisible({ timeout: 8000 }).catch(() => false)) {
     await endEl.clear();
     await endEl.fill(endStr);
     log('  ✓ End date set');

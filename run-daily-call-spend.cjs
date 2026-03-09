@@ -347,55 +347,6 @@ async function setAnalysisValue(page, rep) {
   }
 }
 
-async function dismissDatepicker(page) {
-  // Press Tab to blur field and fire change event, then Escape to close any popup
-  await page.keyboard.press('Tab');
-  await page.waitForTimeout(200);
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  // Click page heading to dismiss datepicker widget
-  const heading = page.locator('h1').first();
-  if (await heading.isVisible({ timeout: 500 }).catch(() => false)) {
-    await heading.click({ force: true });
-  } else {
-    await page.locator('body').click({ position: { x: 10, y: 10 }, force: true }).catch(() => {});
-  }
-  await page.waitForTimeout(400);
-}
-
-async function fillDateField(page, label, dateStr) {
-  const el = page.getByLabel(label);
-  if (!(await el.isVisible({ timeout: 8000 }).catch(() => false))) {
-    throw new Error(`Date field not found: ${label}`);
-  }
-  // Click to focus, select all existing text, type date char by char to trigger datepicker JS
-  await el.click({ force: true });
-  await page.waitForTimeout(200);
-  await page.keyboard.press('Control+A');
-  await page.keyboard.press('Delete');
-  await page.waitForTimeout(100);
-  await el.pressSequentially(dateStr, { delay: 50 });
-  log(`  ✓ ${label} typed: ${dateStr}`);
-  // Verify the field value was accepted
-  const val = await el.inputValue().catch(() => '');
-  log(`  Field value after typing: ${val}`);
-  await dismissDatepicker(page);
-  // Fire change event explicitly in case datepicker missed it
-  await page.evaluate((lbl) => {
-    const inputs = Array.from(document.querySelectorAll('input'));
-    const field = inputs.find(i => {
-      const id = i.id;
-      const labelEl = document.querySelector(`label[for="${id}"]`);
-      return labelEl && labelEl.textContent.trim().includes(lbl.replace(':', '').trim());
-    });
-    if (field) {
-      field.dispatchEvent(new Event('change', { bubbles: true }));
-      field.dispatchEvent(new Event('blur', { bubbles: true }));
-    }
-  }, label);
-  await page.waitForTimeout(300);
-}
-
 async function setDateInputs(page, startStr, endStr) {
   if (endStr === undefined) endStr = startStr;
   log(`  Setting dates: ${startStr} to ${endStr}`);
@@ -405,8 +356,41 @@ async function setDateInputs(page, startStr, endStr) {
   const panelReady = await ensureFilterPanel(page);
   if (!panelReady) throw new Error('Filter panel lost after Analysis Field change');
 
-  await fillDateField(page, SPEND.startDateLabel, startStr);
-  await fillDateField(page, SPEND.endDateLabel, endStr);
+  // The date inputs (#start-date / #end-date) use jQuery UI datepicker with month+year dropdowns.
+  // Typing into the input never works because the widget reads from its own popup selects, not
+  // keyboard input.  The reliable fix is to call the datepicker API directly via jQuery.
+  //
+  // startStr / endStr are MM/DD/YYYY; we parse them into Date objects for setDate().
+  const result = await page.evaluate(([start, end]) => {
+    function parse(str) {
+      const p = str.split('/').map(Number);
+      return new Date(p[2], p[0] - 1, p[1]); // new Date(yyyy, mm-1, dd)
+    }
+    const errors = [];
+    let startVal = '', endVal = '';
+
+    if (typeof $ !== 'undefined' && $.fn && $.fn.datepicker) {
+      try {
+        $('#start-date').datepicker('setDate', parse(start));
+        $('#start-date').trigger('change').trigger('blur');
+        startVal = $('#start-date').val();
+      } catch (e) { errors.push('start: ' + e.message); }
+      try {
+        $('#end-date').datepicker('setDate', parse(end));
+        $('#end-date').trigger('change').trigger('blur');
+        endVal = $('#end-date').val();
+      } catch (e) { errors.push('end: ' + e.message); }
+    } else {
+      errors.push('jQuery / datepicker not available on page');
+    }
+    return { startVal, endVal, errors };
+  }, [startStr, endStr]);
+
+  log(`  ✓ Dates set via jQuery API — start="${result.startVal}" end="${result.endVal}"`);
+  if (result.errors.length) {
+    log(`  ⚠ Date set errors: ${result.errors.join(' | ')}`);
+    throw new Error(`Date setting failed: ${result.errors.join(' | ')}`);
+  }
   log('  ✓ Both dates set and confirmed');
 }
 

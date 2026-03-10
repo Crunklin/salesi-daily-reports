@@ -520,6 +520,7 @@ async function run() {
     await setReportView(page);
     await setAnalysisField(page);
     await setDateInputs(page, startStr, endStr); // once; stays populated for all reps
+    await setUserToAll(page);                    // User = All so manager/leadership calls are included
 
     await page.screenshot({ path: path.join(OUT_DIR, 'call-spend-debug-filter.png'), fullPage: true });
 
@@ -529,14 +530,7 @@ async function run() {
       const fileSafe = rep.name.toLowerCase().replace(/\s+/g, '-');
       const csvPath = path.join(EXPORT_DIR, `call-spend_${fileSafe}_${dateFile}.csv`);
 
-      // Only change rep: User + Analysis Value (other fields stay populated)
-      let userOK = await setUser(page, rep);
-      if (!userOK) {
-        log(`  User dropdown does not have ${rep.name}, trying User=All (report still scoped by Analysis Value)`);
-        userOK = await setUserToAll(page);
-      }
-      if (!userOK) throw new Error(`Could not set user for ${rep.name}`);
-
+      // Only change rep: Analysis Value (User stays as All so manager/leadership calls are included)
       await setAnalysisValue(page, rep);
 
       const applied = await clickApply(page);
@@ -571,7 +565,7 @@ async function run() {
       }
 
       if (i < REPS.length - 1) {
-        // Re-open Filter bar; all fields stay populated, next iteration only sets User + Analysis Value
+        // Re-open Filter bar; all fields stay populated, next iteration only changes Analysis Value
         log('  Re-opening Filter bar for next rep...');
         const panelAgain = await ensureFilterPanel(page);
         if (!panelAgain) {
@@ -583,6 +577,7 @@ async function run() {
           await setReportView(page);
           await setAnalysisField(page);
           await setDateInputs(page, startStr, endStr);
+          await setUserToAll(page);
         }
       }
     }
